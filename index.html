@@ -821,10 +821,9 @@
     let dragHasPrev = false;
     let dragTargetGroup = null;
 
-    // [추가] 두 손가락 중간점이 닿은 대상 판별
+    // [변경] 한 지점이 닿은 대상 판별: "model" / "background" / null
     // 3D 모델을 먼저 검사하고(겹치면 모델 우선), 없으면 영상/이미지 배경을 검사합니다.
-    // 아무것도 닿지 않으면 null (이동 안 함)
-    function pickDragTarget(clientX, clientY) {
+    function pickTargetAtPoint(clientX, clientY) {
 
       if (!setRayFromScreen(clientX, clientY)) return null;
 
@@ -835,7 +834,7 @@
           true
         );
 
-        if (modelHits.length > 0) return modelMoveGroup;
+        if (modelHits.length > 0) return "model";
 
       }
 
@@ -846,11 +845,30 @@
           false
         );
 
-        if (backgroundHits.length > 0) return backgroundMoveGroup;
+        if (backgroundHits.length > 0) return "background";
 
       }
 
       return null;
+
+    }
+
+    // [변경] 두 손가락이 "모두" 같은 대상 위에 있을 때만 그 대상의 그룹을 반환
+    // 한 손가락씩 서로 다른 대상 위이거나, 하나라도 대상 밖이면 null (이동 안 함)
+    function pickDragTarget() {
+
+      const points = Array.from(activePointers.values());
+
+      if (points.length < 2) return null;
+
+      const first = pickTargetAtPoint(points[0].x, points[0].y);
+      const second = pickTargetAtPoint(points[1].x, points[1].y);
+
+      if (!first || first !== second) return null;
+
+      return first === "model"
+        ? modelMoveGroup
+        : backgroundMoveGroup;
 
     }
 
@@ -885,9 +903,16 @@
         const mid = getPinchMidpoint();
 
         // [변경] 두 손가락이 닿은 대상 판별 후, 대상이 있을 때만 이동 기준점 설정
-        dragTargetGroup = mid
-          ? pickDragTarget(mid.x, mid.y)
-          : null;
+        dragTargetGroup = pickDragTarget();
+
+        // [추가] 어떤 대상이 선택됐는지 상단 상태 문구로 표시
+        if (dragTargetGroup === modelMoveGroup) {
+          status.textContent = "이동 중: 오브젝트";
+        } else if (dragTargetGroup === backgroundMoveGroup) {
+          status.textContent = "이동 중: 배경";
+        } else {
+          status.textContent = "이동 대상 없음";
+        }
 
         dragHasPrev = (mid && dragTargetGroup)
           ? screenToAnchorLocal(mid.x, mid.y, dragPrevLocal)
@@ -984,6 +1009,9 @@
       // [추가] 두 손가락 상태가 끝나면 이동 기준점 및 대상 해제
       dragHasPrev = false;
       dragTargetGroup = null;
+
+      // [추가] 손가락을 떼면 상단 상태 문구 원복
+      updateStatus();
 
       if (activePointers.size === 1) {
 
