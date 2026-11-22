@@ -18,38 +18,92 @@
 
   <style>
     * { box-sizing: border-box; }
-    body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
-    #container { width: 100vw; height: 100dvh; position: relative; }
+
+    body {
+      margin: 0;
+      background: #000;
+      overflow: hidden;
+      font-family: sans-serif;
+    }
+
+    #container {
+      width: 100vw;
+      height: 100dvh;
+      position: relative;
+    }
+
     #status {
-      position: fixed; top: 15px; left: 50%;
+      position: fixed;
+      top: 15px;
+      left: 50%;
       transform: translateX(-50%);
-      z-index: 10; padding: 10px 16px;
-      color: white; background: #222c;
-      border-radius: 20px; font-size: 14px;
+      z-index: 10;
+      padding: 10px 16px;
+      color: white;
+      background: #222c;
+      border-radius: 20px;
+      font-size: 13px;
       white-space: nowrap;
     }
+
+    #modelInfo {
+      position: fixed;
+      top: 58px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 10;
+      padding: 8px 12px;
+      color: white;
+      background: #222c;
+      border-radius: 10px;
+      font-size: 11px;
+      text-align: center;
+      white-space: pre-line;
+    }
+
     #startButton {
-      display: none; position: fixed;
-      top: 50%; left: 50%; transform: translate(-50%,-50%);
-      z-index: 20; padding: 16px 26px;
-      border: 0; border-radius: 12px;
-      background: white; font-size: 17px;
+      display: none;
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      z-index: 20;
+      padding: 16px 26px;
+      border: 0;
+      border-radius: 12px;
+      background: white;
+      font-size: 17px;
     }
+
     #controls {
-      position: fixed; bottom: 25px;
-      left: 0; right: 0; z-index: 10;
-      display: flex; justify-content: center; gap: 12px;
+      position: fixed;
+      bottom: 25px;
+      left: 0;
+      right: 0;
+      z-index: 10;
+      display: flex;
+      justify-content: center;
+      gap: 12px;
     }
+
     #controls button {
-      padding: 12px 20px; border: 0;
-      border-radius: 12px; font-size: 16px;
+      padding: 13px 20px;
+      border: 0;
+      border-radius: 12px;
+      background: white;
+      font-size: 17px;
+      font-weight: bold;
     }
   </style>
 </head>
 
 <body>
+
   <div id="container"></div>
-  <div id="status">카메라 연결 중...</div>
+
+  <div id="status">AR 준비 중...</div>
+  <div id="modelInfo">GLB 파일 확인 중...</div>
+
   <button id="startButton">카메라 시작</button>
 
   <div id="controls">
@@ -59,125 +113,269 @@
   </div>
 
   <script type="module">
+
     import * as THREE from "three";
     import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
     import { MindARThree } from "mindar-image-three";
 
     const status = document.getElementById("status");
+    const modelInfo = document.getElementById("modelInfo");
     const startButton = document.getElementById("startButton");
 
+    // AR 설정
     const mindarThree = new MindARThree({
       container: document.querySelector("#container"),
       imageTargetSrc: "./targets.mind",
       maxTrack: 1
     });
 
-    const { renderer, scene } = mindarThree;
+    const { renderer, scene, camera } = mindarThree;
+
     const anchor = mindarThree.addAnchor(0);
 
-    let model = null;
-    const initialScale = 0.2;
-
-    // GLB 불러오기
-    const loader = new GLTFLoader();
-
-    loader.load(
-      "./model.glb",
-      (gltf) => {
-        model = gltf.scene;
-        model.scale.setScalar(initialScale);
-        anchor.group.add(model);
-        status.textContent = "마커를 카메라에 비춰주세요";
-      },
-      undefined,
-      (error) => {
-        console.error(error);
-        status.textContent = "GLB 파일 로딩 오류";
-      }
+    // 조명
+    const ambientLight = new THREE.HemisphereLight(
+      0xffffff, 0x444444, 1.5
     );
+    scene.add(ambientLight);
 
-    // 마커 인식 상태
-    anchor.onTargetFound = () => {
-      status.textContent = "마커 인식 완료";
-    };
+    const directionalLight = new THREE.DirectionalLight(
+      0xffffff, 2
+    );
+    directionalLight.position.set(1, 2, 3);
+    scene.add(directionalLight);
 
-    anchor.onTargetLost = () => {
-      status.textContent = "마커를 찾아주세요";
-    };
-
-    // 카메라 자동 시작
+    // GLB 모델
+    let modelRoot = null;
+    let modelLoaded = false;
+    let loadError = false;
+    let targetVisible = false;
     let started = false;
     let starting = false;
 
+    // 초기 크기: 가장 긴 변을 0.5 단위로 자동 맞춤
+    const TARGET_MODEL_SIZE = 0.5;
+
+    const loader = new GLTFLoader();
+
+    function updateStatus() {
+
+      if (loadError) {
+        status.textContent = "GLB 파일 로딩 실패";
+        return;
+      }
+
+      if (!modelLoaded) {
+        status.textContent = "GLB 불러오는 중...";
+        return;
+      }
+
+      if (!started) {
+        status.textContent = "모델 준비 완료 / 카메라 대기";
+        return;
+      }
+
+      if (targetVisible) {
+        status.textContent = "마커 인식 + 오브젝트 준비 완료";
+      } else {
+        status.textContent = "마커를 카메라에 비춰주세요";
+      }
+    }
+
+    // GLB 파일 로딩
+    loader.load(
+      "./model.glb",
+
+      (gltf) => {
+
+        const model = gltf.scene;
+
+        // 모델 원본 크기 계산
+        const box = new THREE.Box3().setFromObject(model);
+
+        const size = new THREE.Vector3();
+        const center = new THREE.Vector3();
+
+        box.getSize(size);
+        box.getCenter(center);
+
+        const maxDimension = Math.max(
+          size.x,
+          size.y,
+          size.z
+        );
+
+        if (!Number.isFinite(maxDimension) || maxDimension <= 0) {
+          throw new Error("모델 크기를 계산할 수 없습니다.");
+        }
+
+        // 자동 크기 보정
+        const fitScale = TARGET_MODEL_SIZE / maxDimension;
+
+        model.scale.setScalar(fitScale);
+
+        // 모델 중심을 원점으로 이동
+        model.position.set(
+          -center.x * fitScale,
+          -center.y * fitScale,
+          -center.z * fitScale
+        );
+
+        // 조작용 그룹
+        modelRoot = new THREE.Group();
+        modelRoot.add(model);
+
+        anchor.group.add(modelRoot);
+
+        modelLoaded = true;
+
+        // 실제 크기와 자동 적용 배율 표시
+        modelInfo.textContent =
+          "원본 크기: " +
+          size.x.toFixed(3) + " × " +
+          size.y.toFixed(3) + " × " +
+          size.z.toFixed(3) +
+          "\n자동 적용 배율: " + fitScale.toFixed(5) +
+          "\n초기 표시 크기: " + TARGET_MODEL_SIZE;
+
+        console.log("GLB 로딩 성공", gltf);
+
+        updateStatus();
+      },
+
+      (progress) => {
+        if (progress.total > 0) {
+          modelInfo.textContent =
+            "GLB 로딩 중: " +
+            Math.round(progress.loaded / progress.total * 100) + "%";
+        }
+      },
+
+      (error) => {
+        console.error("GLB 로딩 오류:", error);
+        loadError = true;
+        modelInfo.textContent = "GLB 파일을 불러오지 못했습니다.";
+        updateStatus();
+      }
+    );
+
+    // 마커 인식
+    anchor.onTargetFound = () => {
+      targetVisible = true;
+      updateStatus();
+    };
+
+    anchor.onTargetLost = () => {
+      targetVisible = false;
+      updateStatus();
+    };
+
+    // 카메라 실행
     async function startAR() {
+
       if (started || starting) return;
 
       starting = true;
-      status.textContent = "카메라 권한을 확인하는 중...";
+      status.textContent = "카메라 권한 확인 중...";
       startButton.style.display = "none";
 
       try {
+
         await mindarThree.start();
 
         started = true;
         starting = false;
 
         renderer.setAnimationLoop(() => {
-          renderer.render(scene, mindarThree.camera);
+          renderer.render(scene, camera);
         });
 
-        status.textContent = "마커를 카메라에 비춰주세요";
+        updateStatus();
 
       } catch (error) {
+
         console.error("AR 시작 오류:", error);
 
         starting = false;
         status.textContent = "카메라를 시작할 수 없습니다";
         startButton.style.display = "block";
+
       }
     }
 
-    // 페이지 접속 즉시 카메라 시작 시도
+    // 자동 실행 시도
     startAR();
 
-    // 브라우저가 사용자 동작을 요구할 때 재시도
+    // 모바일 수동 실행
     startButton.addEventListener("click", startAR);
 
-    // 크기 조절
+    // 크기 확대
     document.getElementById("bigger").onclick = () => {
-      if (model) model.scale.multiplyScalar(1.15);
+      if (modelRoot) {
+        modelRoot.scale.multiplyScalar(1.2);
+      }
     };
 
+    // 크기 축소
     document.getElementById("smaller").onclick = () => {
-      if (model) model.scale.multiplyScalar(0.87);
+      if (modelRoot) {
+        modelRoot.scale.multiplyScalar(0.83);
+      }
     };
 
     // 초기화
     document.getElementById("reset").onclick = () => {
-      if (!model) return;
-      model.scale.setScalar(initialScale);
-      model.rotation.set(0, 0, 0);
-      model.position.set(0, 0, 0);
+      if (!modelRoot) return;
+
+      modelRoot.scale.set(1, 1, 1);
+      modelRoot.rotation.set(0, 0, 0);
+      modelRoot.position.set(0, 0, 0);
     };
 
-    // 드래그 회전
+    // 모바일 터치 및 마우스 드래그 회전
     let previousX = 0;
     let previousY = 0;
+    let dragging = false;
+
+    renderer.domElement.style.touchAction = "none";
 
     renderer.domElement.addEventListener("pointerdown", (e) => {
+
+      if (!modelRoot) return;
+
+      dragging = true;
+
       previousX = e.clientX;
       previousY = e.clientY;
+
+      renderer.domElement.setPointerCapture(e.pointerId);
+
     });
 
     renderer.domElement.addEventListener("pointermove", (e) => {
-      if (!model || e.buttons !== 1) return;
 
-      model.rotation.y += (e.clientX - previousX) * 0.01;
-      model.rotation.x += (e.clientY - previousY) * 0.01;
+      if (!dragging || !modelRoot) return;
+
+      const deltaX = e.clientX - previousX;
+      const deltaY = e.clientY - previousY;
+
+      modelRoot.rotation.y += deltaX * 0.01;
+      modelRoot.rotation.x += deltaY * 0.01;
 
       previousX = e.clientX;
       previousY = e.clientY;
+
     });
+
+    renderer.domElement.addEventListener("pointerup", () => {
+      dragging = false;
+    });
+
+    renderer.domElement.addEventListener("pointercancel", () => {
+      dragging = false;
+    });
+
   </script>
+
 </body>
 </html>
