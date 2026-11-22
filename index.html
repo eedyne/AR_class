@@ -99,12 +99,13 @@
     }
 
     #controls button {
-      padding: 13px 20px;
+      padding: 10px 16px;
       border: 0;
-      border-radius: 12px;
-      background: white;
-      font-size: 17px;
-      font-weight: bold;
+      border-radius: 20px;
+      background: #000;
+      color: white;
+      font-size: 13px;
+      white-space: nowrap;
       touch-action: manipulation;
     }
   </style>
@@ -121,9 +122,7 @@
   <button id="soundButton">소리 켜기</button>
 
   <div id="controls">
-    <button id="smaller">－</button>
     <button id="reset">초기화</button>
-    <button id="bigger">＋</button>
   </div>
 
   <script type="module">
@@ -763,30 +762,6 @@
     startAR();
 
     startButton.addEventListener("click", startAR);
-
-    // =================================
-    // 확대 버튼
-    // =================================
-
-    document.getElementById("bigger").addEventListener("click", () => {
-
-      if (!modelRoot) return;
-
-      modelRoot.scale.multiplyScalar(1.2);
-
-    });
-
-    // =================================
-    // 축소 버튼
-    // =================================
-
-    document.getElementById("smaller").addEventListener("click", () => {
-
-      if (!modelRoot) return;
-
-      modelRoot.scale.multiplyScalar(0.83);
-
-    });
 
     // =================================
     // 초기화
