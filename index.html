@@ -185,8 +185,14 @@
     const IMAGE_FILE = "./background.jpg";
     const MODEL_FILE = "./model.glb";
 
-    // [추가] 영상과 이미지 사이 간격 (마커 가로 길이 1 기준)
-    const IMAGE_GAP = 0.05;
+    // [변경] 영상과 이미지 사이 간격 (마커 가로 길이 1 기준)
+    // 영상 아래에 재생바가 들어가므로 0.05 -> 0.15로 넓힘
+    const IMAGE_GAP = 0.15;
+
+    // [추가] 영상 재생바 (마커 가로 길이 1 기준, 영상 가로 길이와 같은 길이)
+    const VIDEO_BAR_HEIGHT = 0.025;      // 눈에 보이는 바 두께
+    const VIDEO_BAR_HIT_HEIGHT = 0.10;   // 터치로 잡을 수 있는 영역 두께 (눈에는 안 보임)
+    const VIDEO_BAR_OFFSET = 0.05;       // 영상 아래 가장자리에서 바 중심까지 거리
 
     let modelRoot = null;
     let initialFitScale = 1;
@@ -205,6 +211,9 @@
     // [추가] 이미지 (영상과 동시에 표시)
     let imageMesh = null;
     let imageTexture = null;
+
+    // [추가] 영상 재생바 { group, track, fill, hit }
+    let videoBar = null;
 
     let targetVisible = false;
 
@@ -234,6 +243,9 @@
     // =================================
 
     function clearBackground() {
+
+      // [추가] 영상이 사라지면 재생바도 같이 제거
+      removeVideoBar();
 
       if (backgroundMesh) {
 
@@ -300,8 +312,115 @@
       backgroundMesh = plane;
       backgroundTexture = texture;
 
+      // [추가] 영상 바로 아래에 재생바 생성
+      createVideoBar(ratio);
+
       // [추가] 영상 크기가 정해졌으므로 이미지 기본 위치 다시 계산
       updateImageHome();
+
+    }
+
+    // =================================
+    // [추가] 영상 재생바 생성 / 제거 / 진행 갱신
+    // 영상 그룹(backgroundMoveGroup) 안에 넣어서
+    // 영상을 이동·확대/축소하면 같이 따라옴
+    // =================================
+
+    function createVideoBar(videoRatio) {
+
+      removeVideoBar();
+
+      const group = new THREE.Group();
+
+      group.position.set(
+        0,
+        -(videoRatio / 2 + VIDEO_BAR_OFFSET),
+        0.001
+      );
+
+      // 바 배경
+      const track = new THREE.Mesh(
+        new THREE.PlaneGeometry(1, VIDEO_BAR_HEIGHT),
+        new THREE.MeshBasicMaterial({
+          color: 0x000000,
+          transparent: true,
+          opacity: 0.5,
+          side: THREE.DoubleSide
+        })
+      );
+
+      track.renderOrder = 1;
+
+      // 진행 표시
+      const fill = new THREE.Mesh(
+        new THREE.PlaneGeometry(1, VIDEO_BAR_HEIGHT),
+        new THREE.MeshBasicMaterial({
+          color: 0xffffff,
+          side: THREE.DoubleSide
+        })
+      );
+
+      fill.position.set(-0.5, 0, 0.001);
+      fill.scale.x = 0.0001;
+      fill.renderOrder = 2;
+
+      // 터치 영역 (투명, 눈에 안 보임)
+      const hit = new THREE.Mesh(
+        new THREE.PlaneGeometry(1, VIDEO_BAR_HIT_HEIGHT),
+        new THREE.MeshBasicMaterial({
+          transparent: true,
+          opacity: 0,
+          depthWrite: false,
+          side: THREE.DoubleSide
+        })
+      );
+
+      hit.position.z = 0.002;
+
+      group.add(hit);
+      group.add(track);
+      group.add(fill);
+
+      backgroundMoveGroup.add(group);
+
+      videoBar = { group, track, fill, hit };
+
+    }
+
+    function removeVideoBar() {
+
+      if (!videoBar) return;
+
+      backgroundMoveGroup.remove(videoBar.group);
+
+      [videoBar.track, videoBar.fill, videoBar.hit].forEach((mesh) => {
+        mesh.geometry.dispose();
+        mesh.material.dispose();
+      });
+
+      videoBar = null;
+
+    }
+
+    function updateVideoBar() {
+
+      if (
+        !videoBar ||
+        !video ||
+        !Number.isFinite(video.duration) ||
+        video.duration <= 0
+      ) {
+        return;
+      }
+
+      const progress = THREE.MathUtils.clamp(
+        video.currentTime / video.duration,
+        0,
+        1
+      );
+
+      videoBar.fill.scale.x = Math.max(progress, 0.0001);
+      videoBar.fill.position.x = -0.5 + progress / 2;
 
     }
 
@@ -741,6 +860,7 @@
         starting = false;
 
         renderer.setAnimationLoop(() => {
+          updateVideoBar();
           renderer.render(scene, camera);
         });
 
@@ -817,6 +937,39 @@
     let tapStartX = 0;
     let tapStartY = 0;
     let tapStartTime = 0;
+
+    // [추가] 재생바 터치 / 드래그 위치로 영상 재생 위치 이동
+    // 터치 지점을 마커 평면 좌표로 바꾼 뒤, 영상 그룹의 위치·크기를 빼서
+    // 영상 가로 길이 기준 0 ~ 1 진행률로 계산
+    const barSeekLocal = new THREE.Vector3();
+
+    function seekVideoFromScreen(clientX, clientY) {
+
+      if (
+        !video ||
+        !videoReady ||
+        videoFailed ||
+        !Number.isFinite(video.duration) ||
+        video.duration <= 0
+      ) {
+        return;
+      }
+
+      if (!screenToAnchorLocal(clientX, clientY, barSeekLocal)) return;
+
+      const scaleX = backgroundMoveGroup.scale.x;
+
+      if (!scaleX) return;
+
+      const progress = THREE.MathUtils.clamp(
+        (barSeekLocal.x - backgroundMoveGroup.position.x) / scaleX + 0.5,
+        0,
+        1
+      );
+
+      video.currentTime = progress * video.duration;
+
+    }
 
     // [추가] 영상 재생 / 일시정지 전환
     function toggleVideoPlayback() {
@@ -961,6 +1114,18 @@
 
       }
 
+      // [추가] 재생바 (영상 바로 아래)
+      if (videoBar) {
+
+        const barHits = dragRaycaster.intersectObject(
+          videoBar.hit,
+          false
+        );
+
+        if (barHits.length > 0) return "bar";
+
+      }
+
       if (backgroundMesh) {
 
         const backgroundHits = dragRaycaster.intersectObject(
@@ -1018,6 +1183,11 @@
 
         // [추가] 터치 시작 지점의 대상 판별 및 탭 판정 시작
         singleStartTarget = pickTargetAtPoint(e.clientX, e.clientY);
+
+        // [추가] 재생바를 누르면 그 위치로 바로 이동
+        if (singleStartTarget === "bar") {
+          seekVideoFromScreen(e.clientX, e.clientY);
+        }
 
         tapCandidate = true;
         tapStartX = e.clientX;
@@ -1122,6 +1292,14 @@
             );
 
           }
+
+          previousX = e.clientX;
+          previousY = e.clientY;
+
+        } else if (singleStartTarget === "bar") {
+
+          // [추가] 재생바 드래그: 손가락 위치로 재생 위치 이동
+          seekVideoFromScreen(e.clientX, e.clientY);
 
           previousX = e.clientX;
           previousY = e.clientY;
