@@ -100,7 +100,6 @@
 <body>
 
   <div id="container"></div>
-
   <div id="status">AR 준비 중...</div>
   <div id="modelInfo">GLB 파일 확인 중...</div>
 
@@ -122,7 +121,6 @@
     const modelInfo = document.getElementById("modelInfo");
     const startButton = document.getElementById("startButton");
 
-    // AR 설정
     const mindarThree = new MindARThree({
       container: document.querySelector("#container"),
       imageTargetSrc: "./targets.mind",
@@ -134,18 +132,21 @@
     const anchor = mindarThree.addAnchor(0);
 
     // 조명
-    const ambientLight = new THREE.HemisphereLight(
-      0xffffff, 0x444444, 1.5
+    scene.add(
+      new THREE.HemisphereLight(0xffffff, 0x444444, 1.5)
     );
-    scene.add(ambientLight);
 
     const directionalLight = new THREE.DirectionalLight(
       0xffffff, 2
     );
+
     directionalLight.position.set(1, 2, 3);
     scene.add(directionalLight);
 
-    // GLB 모델
+    // 모델 설정
+    const TARGET_MODEL_SIZE = 0.15;
+    const MODEL_HEIGHT_OFFSET = 0.03;
+
     let modelRoot = null;
     let modelLoaded = false;
     let loadError = false;
@@ -153,36 +154,24 @@
     let started = false;
     let starting = false;
 
-    // 초기 크기: 가장 긴 변을 0.5 단위로 자동 맞춤
-    const TARGET_MODEL_SIZE = 0.5;
-
     const loader = new GLTFLoader();
 
     function updateStatus() {
 
       if (loadError) {
         status.textContent = "GLB 파일 로딩 실패";
-        return;
-      }
-
-      if (!modelLoaded) {
+      } else if (!modelLoaded) {
         status.textContent = "GLB 불러오는 중...";
-        return;
-      }
-
-      if (!started) {
+      } else if (!started) {
         status.textContent = "모델 준비 완료 / 카메라 대기";
-        return;
-      }
-
-      if (targetVisible) {
-        status.textContent = "마커 인식 + 오브젝트 준비 완료";
+      } else if (targetVisible) {
+        status.textContent = "마커 인식 + 오브젝트 표시 준비 완료";
       } else {
         status.textContent = "마커를 카메라에 비춰주세요";
       }
     }
 
-    // GLB 파일 로딩
+    // GLB 로딩
     loader.load(
       "./model.glb",
 
@@ -190,7 +179,7 @@
 
         const model = gltf.scene;
 
-        // 모델 원본 크기 계산
+        // 원본 바운딩 박스
         const box = new THREE.Box3().setFromObject(model);
 
         const size = new THREE.Vector3();
@@ -200,43 +189,55 @@
         box.getCenter(center);
 
         const maxDimension = Math.max(
-          size.x,
-          size.y,
-          size.z
+          size.x, size.y, size.z
         );
 
         if (!Number.isFinite(maxDimension) || maxDimension <= 0) {
-          throw new Error("모델 크기를 계산할 수 없습니다.");
+          loadError = true;
+          modelInfo.textContent = "모델 크기 계산 오류";
+          updateStatus();
+          return;
         }
 
-        // 자동 크기 보정
+        // 크기 자동 보정
         const fitScale = TARGET_MODEL_SIZE / maxDimension;
 
         model.scale.setScalar(fitScale);
 
-        // 모델 중심을 원점으로 이동
+        // X 중심 정렬, Y는 밑면 기준, Z 중심 정렬
         model.position.set(
           -center.x * fitScale,
-          -center.y * fitScale,
+          -box.min.y * fitScale,
           -center.z * fitScale
         );
 
-        // 조작용 그룹
-        modelRoot = new THREE.Group();
-        modelRoot.add(model);
+        // 마커에 부착되는 방향 그룹
+        const orientationGroup = new THREE.Group();
 
-        anchor.group.add(modelRoot);
+        // Y-up GLB를 마커 평면에서 세우기
+        orientationGroup.rotation.x = Math.PI / 2;
+
+        // 마커 표면에서 카메라 방향으로 조금 띄움
+        orientationGroup.position.z = MODEL_HEIGHT_OFFSET;
+
+        anchor.group.add(orientationGroup);
+
+        // 사용자 조작 그룹
+        modelRoot = new THREE.Group();
+
+        orientationGroup.add(modelRoot);
+        modelRoot.add(model);
 
         modelLoaded = true;
 
-        // 실제 크기와 자동 적용 배율 표시
         modelInfo.textContent =
           "원본 크기: " +
           size.x.toFixed(3) + " × " +
           size.y.toFixed(3) + " × " +
           size.z.toFixed(3) +
-          "\n자동 적용 배율: " + fitScale.toFixed(5) +
-          "\n초기 표시 크기: " + TARGET_MODEL_SIZE;
+          "\n자동 적용 크기: " + TARGET_MODEL_SIZE +
+          "\n초기 배율: " + fitScale.toFixed(5) +
+          "\n배치: 밑면 기준 / X축 90도";
 
         console.log("GLB 로딩 성공", gltf);
 
@@ -253,8 +254,10 @@
 
       (error) => {
         console.error("GLB 로딩 오류:", error);
+
         loadError = true;
-        modelInfo.textContent = "GLB 파일을 불러오지 못했습니다.";
+        modelInfo.textContent = "GLB 파일 로딩 오류";
+
         updateStatus();
       }
     );
@@ -270,7 +273,7 @@
       updateStatus();
     };
 
-    // 카메라 실행
+    // 카메라 시작
     async function startAR() {
 
       if (started || starting) return;
@@ -303,20 +306,19 @@
       }
     }
 
-    // 자동 실행 시도
+    // 자동 카메라 실행
     startAR();
 
-    // 모바일 수동 실행
     startButton.addEventListener("click", startAR);
 
-    // 크기 확대
+    // 확대
     document.getElementById("bigger").onclick = () => {
       if (modelRoot) {
         modelRoot.scale.multiplyScalar(1.2);
       }
     };
 
-    // 크기 축소
+    // 축소
     document.getElementById("smaller").onclick = () => {
       if (modelRoot) {
         modelRoot.scale.multiplyScalar(0.83);
@@ -325,14 +327,15 @@
 
     // 초기화
     document.getElementById("reset").onclick = () => {
+
       if (!modelRoot) return;
 
       modelRoot.scale.set(1, 1, 1);
       modelRoot.rotation.set(0, 0, 0);
-      modelRoot.position.set(0, 0, 0);
+
     };
 
-    // 모바일 터치 및 마우스 드래그 회전
+    // 모바일 터치 회전
     let previousX = 0;
     let previousY = 0;
     let dragging = false;
