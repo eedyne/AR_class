@@ -17,7 +17,9 @@
   </script>
 
   <style>
-    * { box-sizing: border-box; }
+    * {
+      box-sizing: border-box;
+    }
 
     body {
       margin: 0;
@@ -44,6 +46,16 @@
       border-radius: 20px;
       font-size: 13px;
       white-space: nowrap;
+      pointer-events: none;
+    }
+
+    /* 드래그 회전 영역 */
+    #touchArea {
+      position: fixed;
+      inset: 0;
+      z-index: 5;
+      touch-action: none;
+      background: transparent;
     }
 
     #startButton {
@@ -60,26 +72,26 @@
       font-size: 17px;
     }
 
+    /* 하단 조작 버튼 */
     #controls {
       position: fixed;
       bottom: 25px;
       left: 0;
       right: 0;
-      z-index: 10;
+      z-index: 15;
       display: flex;
       justify-content: center;
-      gap: 8px;
-      padding: 0 8px;
+      gap: 12px;
     }
 
     #controls button {
-      min-width: 48px;
-      padding: 13px 15px;
+      padding: 13px 20px;
       border: 0;
       border-radius: 12px;
       background: white;
       font-size: 17px;
       font-weight: bold;
+      touch-action: manipulation;
     }
   </style>
 </head>
@@ -87,16 +99,17 @@
 <body>
 
   <div id="container"></div>
+
+  <div id="touchArea"></div>
+
   <div id="status">AR 준비 중...</div>
 
   <button id="startButton">카메라 시작</button>
 
   <div id="controls">
-    <button id="rotateLeft">↶</button>
     <button id="smaller">－</button>
     <button id="reset">초기화</button>
     <button id="bigger">＋</button>
-    <button id="rotateRight">↷</button>
   </div>
 
   <script type="module">
@@ -107,6 +120,7 @@
 
     const status = document.getElementById("status");
     const startButton = document.getElementById("startButton");
+    const touchArea = document.getElementById("touchArea");
 
     const mindarThree = new MindARThree({
       container: document.querySelector("#container"),
@@ -192,7 +206,7 @@
 
         initialFitScale = TARGET_MODEL_SIZE / maxDimension;
 
-        // 밑면 기준 위치 유지
+        // 밑면 기준 위치
         model.position.set(
           -center.x,
           -box.min.y,
@@ -205,7 +219,7 @@
         modelRoot.scale.setScalar(initialFitScale);
         modelRoot.add(model);
 
-        // 기존 방향 및 위치 유지
+        // 기존 방향 및 높이 유지
         const orientationGroup = new THREE.Group();
 
         orientationGroup.rotation.x = Math.PI / 2;
@@ -284,98 +298,97 @@
 
     startButton.addEventListener("click", startAR);
 
-    // 크기 조절
+    // 확대
 
-    document.getElementById("bigger").onclick = () => {
+    document.getElementById("bigger").addEventListener("click", () => {
 
       if (!modelRoot) return;
 
       modelRoot.scale.multiplyScalar(1.2);
 
-    };
+    });
 
-    document.getElementById("smaller").onclick = () => {
+    // 축소
+
+    document.getElementById("smaller").addEventListener("click", () => {
 
       if (!modelRoot) return;
 
       modelRoot.scale.multiplyScalar(0.83);
 
-    };
-
-    // 좌우 회전 버튼
-
-    const ROTATION_STEP = THREE.MathUtils.degToRad(15);
-
-    document.getElementById("rotateLeft").onclick = () => {
-
-      if (!modelRoot) return;
-
-      modelRoot.rotation.y -= ROTATION_STEP;
-
-    };
-
-    document.getElementById("rotateRight").onclick = () => {
-
-      if (!modelRoot) return;
-
-      modelRoot.rotation.y += ROTATION_STEP;
-
-    };
+    });
 
     // 초기화
 
-    document.getElementById("reset").onclick = () => {
+    document.getElementById("reset").addEventListener("click", () => {
 
       if (!modelRoot) return;
 
       modelRoot.scale.setScalar(initialFitScale);
       modelRoot.rotation.set(0, 0, 0);
 
-    };
+    });
 
-    // 모바일 터치 드래그 회전
-
-    const touchArea = document.getElementById("touchArea");
+    // =================================
+    // 손가락 드래그 회전
+    // =================================
 
     let previousX = 0;
     let previousY = 0;
     let dragging = false;
-    
+    let activePointerId = null;
+
+    const ROTATION_SPEED = 0.01;
+
     touchArea.addEventListener("pointerdown", (e) => {
-    
+
       if (!modelRoot || !targetVisible) return;
-    
+
       dragging = true;
-    
+      activePointerId = e.pointerId;
+
       previousX = e.clientX;
       previousY = e.clientY;
-    
+
       touchArea.setPointerCapture(e.pointerId);
-    
+
     });
-    
+
     touchArea.addEventListener("pointermove", (e) => {
-    
+
       if (!dragging || !modelRoot) return;
-    
+      if (e.pointerId !== activePointerId) return;
+
       const deltaX = e.clientX - previousX;
       const deltaY = e.clientY - previousY;
-    
-      modelRoot.rotation.y += deltaX * 0.01;
-      modelRoot.rotation.x += deltaY * 0.01;
-    
+
+      // 좌우 드래그: Y축 회전
+      modelRoot.rotation.y += deltaX * ROTATION_SPEED;
+
+      // 상하 드래그: X축 회전
+      modelRoot.rotation.x += deltaY * ROTATION_SPEED;
+
       previousX = e.clientX;
       previousY = e.clientY;
-    
+
     });
-    
-    touchArea.addEventListener("pointerup", () => {
+
+    function stopDragging(e) {
+
+      if (e.pointerId !== activePointerId) return;
+
       dragging = false;
-    });
-    
-    touchArea.addEventListener("pointercancel", () => {
+      activePointerId = null;
+
+    }
+
+    touchArea.addEventListener("pointerup", stopDragging);
+    touchArea.addEventListener("pointercancel", stopDragging);
+    touchArea.addEventListener("lostpointercapture", () => {
       dragging = false;
+      activePointerId = null;
     });
+
   </script>
 
 </body>
