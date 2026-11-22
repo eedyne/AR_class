@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Image AR</title>
+
+  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-three.prod.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; overflow: hidden; font-family: sans-serif; background: #000; }
+    #status {
+      position: fixed; top: 15px; left: 50%;
+      transform: translateX(-50%);
+      color: white; background: #222c;
+      padding: 10px 16px; border-radius: 20px;
+      z-index: 10; font-size: 14px;
+    }
+    #controls {
+      position: fixed; bottom: 25px; left: 0; right: 0;
+      display: flex; justify-content: center; gap: 12px;
+      z-index: 10;
+    }
+    button {
+      border: 0; border-radius: 12px;
+      padding: 13px 19px; font-size: 15px;
+      background: white; color: #111;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="status">카메라 준비 중...</div>
+
+  <div id="controls">
+    <button id="smaller">－</button>
+    <button id="reset">초기화</button>
+    <button id="bigger">＋</button>
+  </div>
+
+  <script type="module">
+    import * as THREE from
+      "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js";
+    import { GLTFLoader } from
+      "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/GLTFLoader.js";
+
+    const status = document.getElementById("status");
+
+    const mindarThree = new window.MINDAR.IMAGE.MindARThree({
+      container: document.body,
+      imageTargetSrc: "./targets.mind",
+      maxTrack: 1
+    });
+
+    const { renderer, scene, camera } = mindarThree;
+
+    const anchor = mindarThree.addAnchor(0);
+
+    const group = new THREE.Group();
+    anchor.group.add(group);
+
+    let model;
+    let baseScale = 0.5;
+
+    const loader = new GLTFLoader();
+
+    loader.load("./model.glb", (gltf) => {
+      model = gltf.scene;
+
+      model.scale.setScalar(baseScale);
+
+      group.add(model);
+      status.textContent = "마커를 카메라에 비춰주세요";
+    }, undefined, (error) => {
+      console.error(error);
+      status.textContent = "GLB 로딩 오류";
+    });
+
+    anchor.onTargetFound = () => {
+      status.textContent = "마커 인식 완료";
+    };
+
+    anchor.onTargetLost = () => {
+      status.textContent = "마커를 찾아주세요";
+    };
+
+    document.getElementById("bigger").onclick = () => {
+      if (model) model.scale.multiplyScalar(1.15);
+    };
+
+    document.getElementById("smaller").onclick = () => {
+      if (model) model.scale.multiplyScalar(0.87);
+    };
+
+    document.getElementById("reset").onclick = () => {
+      if (!model) return;
+      model.scale.setScalar(baseScale);
+      model.rotation.set(0, 0, 0);
+      model.position.set(0, 0, 0);
+    };
+
+    // 터치 조작: 한 손가락 회전 / 두 손가락 확대축소
+    let previousX = 0;
+    let previousY = 0;
+    let previousDistance = 0;
+
+    renderer.domElement.addEventListener("touchstart", (e) => {
+      if (e.touches.length === 1) {
+        previousX = e.touches[0].clientX;
+        previousY = e.touches[0].clientY;
+      }
+      if (e.touches.length === 2) {
+        previousDistance = distance(e.touches);
+      }
+    }, { passive: false });
+
+    renderer.domElement.addEventListener("touchmove", (e) => {
+      if (!model) return;
+      e.preventDefault();
+
+      if (e.touches.length === 1) {
+        const x = e.touches[0].clientX;
+        const y = e.touches[0].clientY;
+
+        model.rotation.y += (x - previousX) * 0.01;
+        model.rotation.x += (y - previousY) * 0.01;
+
+        previousX = x;
+        previousY = y;
+      }
+
+      if (e.touches.length === 2) {
+        const currentDistance = distance(e.touches);
+        if (previousDistance > 0) {
+          const factor = currentDistance / previousDistance;
+          model.scale.multiplyScalar(factor);
+        }
+        previousDistance = currentDistance;
+      }
+    }, { passive: false });
+
+    function distance(touches) {
+      const dx = touches[0].clientX - touches[1].clientX;
+      const dy = touches[0].clientY - touches[1].clientY;
+      return Math.hypot(dx, dy);
+    }
+
+    await mindarThree.start();
+    renderer.setAnimationLoop(() => {
+      renderer.render(scene, camera);
+    });
+  </script>
+</body>
+</html>
