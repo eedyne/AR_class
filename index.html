@@ -118,6 +118,10 @@
     const startButton = document.getElementById("startButton");
     const touchArea = document.getElementById("touchArea");
 
+    // =================================
+    // AR 초기 설정
+    // =================================
+
     const mindarThree = new MindARThree({
       container: document.querySelector("#container"),
       imageTargetSrc: "./targets.mind",
@@ -140,17 +144,25 @@
     directionalLight.position.set(1, 2, 3);
     scene.add(directionalLight);
 
-    // 모델 크기 및 위치 설정
+    // =================================
+    // 콘텐츠 설정
+    // =================================
 
     const TARGET_MODEL_SIZE = 1.00;
     const MODEL_HEIGHT_OFFSET = 0.03;
 
+    // 콘텐츠 파일명
+    const VIDEO_FILE = "./background.mp4";
+    const IMAGE_FILE = "./background.jpg";
+    const MODEL_FILE = "./model.glb";
+
     let modelRoot = null;
     let initialFitScale = 1;
 
-    let modelLoaded = false;
-    let loadError = false;
+    let video = null;
+    let videoLoaded = false;
     let targetVisible = false;
+
     let started = false;
     let starting = false;
 
@@ -158,12 +170,8 @@
 
     function updateStatus() {
 
-      if (loadError) {
-        status.textContent = "GLB 파일 로딩 실패";
-      } else if (!modelLoaded) {
-        status.textContent = "GLB 불러오는 중...";
-      } else if (!started) {
-        status.textContent = "모델 준비 완료 / 카메라 대기";
+      if (!started) {
+        status.textContent = "카메라 대기 중";
       } else if (targetVisible) {
         status.textContent = "마커 인식 완료";
       } else {
@@ -171,10 +179,123 @@
       }
     }
 
-    // GLB 로딩
+    // =================================
+    // 배경 이미지 / 영상 표시
+    // =================================
+
+    function addBackground(texture) {
+
+      const image = texture.image;
+
+      const ratio = image.height / image.width;
+
+      // 마커 폭 1을 기준으로 비율 유지
+      const geometry = new THREE.PlaneGeometry(
+        1,
+        ratio
+      );
+
+      const material = new THREE.MeshBasicMaterial({
+        map: texture,
+        side: THREE.DoubleSide
+      });
+
+      const plane = new THREE.Mesh(
+        geometry,
+        material
+      );
+
+      // 마커 표면에 배치
+      plane.position.set(0, 0, 0);
+
+      plane.renderOrder = 0;
+
+      anchor.group.add(plane);
+
+    }
+
+    // 이미지 로딩
+    function loadBackgroundImage() {
+
+      const textureLoader = new THREE.TextureLoader();
+
+      textureLoader.load(
+        IMAGE_FILE,
+
+        (texture) => {
+          addBackground(texture);
+          console.log("배경 이미지 로딩 성공");
+        },
+
+        undefined,
+
+        (error) => {
+          console.log("배경 이미지 없음 또는 로딩 실패");
+        }
+      );
+    }
+
+    // 영상 로딩
+    function loadBackgroundVideo() {
+
+      video = document.createElement("video");
+
+      video.src = VIDEO_FILE;
+      video.loop = true;
+      video.muted = true;
+      video.playsInline = true;
+      video.autoplay = false;
+      video.preload = "auto";
+
+      video.setAttribute("playsinline", "");
+      video.setAttribute("webkit-playsinline", "");
+
+      video.addEventListener("loadedmetadata", () => {
+
+        if (videoLoaded) return;
+
+        videoLoaded = true;
+
+        const texture = new THREE.VideoTexture(video);
+
+        texture.colorSpace = THREE.SRGBColorSpace;
+
+        addBackground(texture);
+
+        console.log("배경 영상 로딩 성공");
+
+        if (targetVisible) {
+          video.play().catch(() => {});
+        }
+
+      });
+
+      video.addEventListener("error", () => {
+
+        if (videoLoaded) return;
+
+        console.log("영상 없음 또는 로딩 실패. 이미지 사용");
+
+        videoLoaded = true;
+
+        loadBackgroundImage();
+
+      });
+
+      video.load();
+
+    }
+
+    // 영상 우선, 실패 시 이미지 사용
+    loadBackgroundVideo();
+
+    // =================================
+    // GLB 3D 모델 로딩
+    // =================================
 
     loader.load(
-      "./model.glb",
+
+      MODEL_FILE,
 
       (gltf) => {
 
@@ -195,8 +316,7 @@
         );
 
         if (!Number.isFinite(maxDimension) || maxDimension <= 0) {
-          loadError = true;
-          updateStatus();
+          console.log("모델 크기 계산 오류");
           return;
         }
 
@@ -215,54 +335,66 @@
         modelRoot.scale.setScalar(initialFitScale);
         modelRoot.add(model);
 
-        // 기존 방향 및 높이 유지
+        // 기존 방향 및 위치 유지
         const orientationGroup = new THREE.Group();
 
         orientationGroup.rotation.x = Math.PI / 2;
         orientationGroup.position.z = MODEL_HEIGHT_OFFSET;
 
         orientationGroup.add(modelRoot);
+
         anchor.group.add(orientationGroup);
 
-        modelLoaded = true;
+        console.log("GLB 모델 로딩 성공");
 
-        updateStatus();
       },
 
-      (progress) => {
-        if (progress.total > 0) {
-          status.textContent =
-            "GLB 로딩 중: " +
-            Math.round(progress.loaded / progress.total * 100) + "%";
-        }
-      },
+      undefined,
 
       (error) => {
-        console.error("GLB 로딩 오류:", error);
-        loadError = true;
-        updateStatus();
+        console.log("GLB 없음 또는 로딩 실패");
       }
+
     );
 
+    // =================================
     // 마커 인식
+    // =================================
 
     anchor.onTargetFound = () => {
+
       targetVisible = true;
+
+      if (video && videoLoaded) {
+        video.play().catch(() => {});
+      }
+
       updateStatus();
+
     };
 
     anchor.onTargetLost = () => {
+
       targetVisible = false;
+
+      if (video) {
+        video.pause();
+      }
+
       updateStatus();
+
     };
 
+    // =================================
     // 카메라 시작
+    // =================================
 
     async function startAR() {
 
       if (started || starting) return;
 
       starting = true;
+
       status.textContent = "카메라 권한 확인 중...";
       startButton.style.display = "none";
 
@@ -284,17 +416,21 @@
         console.error("AR 시작 오류:", error);
 
         starting = false;
+
         status.textContent = "카메라를 시작할 수 없습니다";
         startButton.style.display = "block";
 
       }
+
     }
 
     startAR();
 
     startButton.addEventListener("click", startAR);
 
+    // =================================
     // 확대 버튼
+    // =================================
 
     document.getElementById("bigger").addEventListener("click", () => {
 
@@ -304,7 +440,9 @@
 
     });
 
+    // =================================
     // 축소 버튼
+    // =================================
 
     document.getElementById("smaller").addEventListener("click", () => {
 
@@ -314,7 +452,9 @@
 
     });
 
+    // =================================
     // 초기화
+    // =================================
 
     document.getElementById("reset").addEventListener("click", () => {
 
@@ -326,7 +466,8 @@
     });
 
     // =================================
-    // 한 손가락 회전 / 두 손가락 확대 축소
+    // 한 손가락 회전
+    // 두 손가락 확대 / 축소
     // =================================
 
     const activePointers = new Map();
@@ -349,11 +490,12 @@
       const dy = points[0].y - points[1].y;
 
       return Math.sqrt(dx * dx + dy * dy);
+
     }
 
     touchArea.addEventListener("pointerdown", (e) => {
 
-      if (!modelRoot || !targetVisible) return;
+      if (!targetVisible || !modelRoot) return;
 
       e.preventDefault();
 
@@ -369,9 +511,10 @@
         previousX = e.clientX;
         previousY = e.clientY;
 
-      } else if (activePointers.size === 2) {
+      }
 
-        // 두 손가락 시작 시 크기와 거리 저장
+      if (activePointers.size === 2) {
+
         pinchStartDistance = getPinchDistance();
         pinchStartScale = modelRoot.scale.x;
 
@@ -381,19 +524,17 @@
 
     touchArea.addEventListener("pointermove", (e) => {
 
-      if (!modelRoot || !activePointers.has(e.pointerId)) return;
+      if (!activePointers.has(e.pointerId)) return;
 
       e.preventDefault();
-
-      const previousPoint = activePointers.get(e.pointerId);
 
       activePointers.set(e.pointerId, {
         x: e.clientX,
         y: e.clientY
       });
 
-      // 한 손가락: 모델 회전
-      if (activePointers.size === 1) {
+      // 한 손가락: 회전
+      if (activePointers.size === 1 && modelRoot) {
 
         const deltaX = e.clientX - previousX;
         const deltaY = e.clientY - previousY;
@@ -406,8 +547,8 @@
 
       }
 
-      // 두 손가락: 확대 및 축소
-      else if (activePointers.size === 2) {
+      // 두 손가락: 확대 / 축소
+      else if (activePointers.size === 2 && modelRoot) {
 
         const currentDistance = getPinchDistance();
 
@@ -417,7 +558,6 @@
 
           const newScale = pinchStartScale * scaleRatio;
 
-          // 지나치게 작거나 커지는 것을 방지
           const minScale = initialFitScale * 0.1;
           const maxScale = initialFitScale * 10;
 
@@ -443,8 +583,6 @@
 
       if (activePointers.size === 1) {
 
-        // 두 손가락 중 하나를 놓으면 남은 손가락을
-        // 새로운 회전 시작점으로 설정
         const remaining = Array.from(activePointers.values())[0];
 
         previousX = remaining.x;
