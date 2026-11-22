@@ -802,6 +802,41 @@
 
     const ROTATION_SPEED = 0.01;
 
+    // [추가] 영상 두드리기(탭) 판정 기준
+    const TAP_MOVE_LIMIT = 10;   // px: 이 이상 움직이면 탭이 아님
+    const TAP_MAX_TIME = 400;    // ms: 이 시간 안에 손을 떼야 탭
+
+    // [추가] 영상 위 드래그 시 재생 위치 이동량
+    // 1 = 화면 가로 전체를 드래그하면 영상 전체 길이만큼 이동
+    const SEEK_SCREEN_WIDTH_RATIO = 1;
+
+    // [추가] 한 손가락 터치 상태
+    let singleStartTarget = null;   // 터치 시작 지점의 대상 ("model" / "image" / "background" / null)
+    let tapCandidate = false;
+    let tapStartX = 0;
+    let tapStartY = 0;
+    let tapStartTime = 0;
+
+    // [추가] 영상 재생 / 일시정지 전환
+    function toggleVideoPlayback() {
+
+      if (
+        !video ||
+        !videoReady ||
+        videoFailed ||
+        !targetVisible
+      ) {
+        return;
+      }
+
+      if (video.paused) {
+        playBackgroundVideo();
+      } else {
+        video.pause();
+      }
+
+    }
+
     function getPinchDistance() {
 
       const points = Array.from(activePointers.values());
@@ -980,9 +1015,21 @@
         previousX = e.clientX;
         previousY = e.clientY;
 
+        // [추가] 터치 시작 지점의 대상 판별 및 탭 판정 시작
+        singleStartTarget = pickTargetAtPoint(e.clientX, e.clientY);
+
+        tapCandidate = true;
+        tapStartX = e.clientX;
+        tapStartY = e.clientY;
+        tapStartTime = performance.now();
+
       }
 
       if (activePointers.size === 2) {
+
+        // [추가] 두 손가락이 되면 영상 탭 / 영상 재생 위치 이동 해제
+        singleStartTarget = null;
+        tapCandidate = false;
 
         pinchStartDistance = getPinchDistance();
 
@@ -1033,17 +1080,63 @@
         y: e.clientY
       });
 
-      // 한 손가락: 회전
-      if (activePointers.size === 1 && modelRoot) {
+      // [변경] 한 손가락: 영상 위에서 시작했으면 재생 위치 이동, 아니면 회전
+      if (activePointers.size === 1) {
 
-        const deltaX = e.clientX - previousX;
-        const deltaY = e.clientY - previousY;
+        // 일정 거리 이상 움직이면 탭이 아님
+        if (tapCandidate) {
 
-        modelRoot.rotation.y += deltaX * ROTATION_SPEED;
-        modelRoot.rotation.x += deltaY * ROTATION_SPEED;
+          const movedX = e.clientX - tapStartX;
+          const movedY = e.clientY - tapStartY;
 
-        previousX = e.clientX;
-        previousY = e.clientY;
+          if (Math.sqrt(movedX * movedX + movedY * movedY) > TAP_MOVE_LIMIT) {
+            tapCandidate = false;
+          }
+
+        }
+
+        if (singleStartTarget === "background") {
+
+          // 영상 재생 위치 앞뒤 이동 (오른쪽 = 앞으로, 왼쪽 = 뒤로)
+          if (
+            !tapCandidate &&
+            video &&
+            videoReady &&
+            !videoFailed &&
+            Number.isFinite(video.duration) &&
+            video.duration > 0
+          ) {
+
+            const deltaX = e.clientX - previousX;
+
+            const seekSeconds =
+              (deltaX / window.innerWidth) *
+              video.duration *
+              SEEK_SCREEN_WIDTH_RATIO;
+
+            video.currentTime = THREE.MathUtils.clamp(
+              video.currentTime + seekSeconds,
+              0,
+              video.duration
+            );
+
+          }
+
+          previousX = e.clientX;
+          previousY = e.clientY;
+
+        } else if (modelRoot) {
+
+          const deltaX = e.clientX - previousX;
+          const deltaY = e.clientY - previousY;
+
+          modelRoot.rotation.y += deltaX * ROTATION_SPEED;
+          modelRoot.rotation.x += deltaY * ROTATION_SPEED;
+
+          previousX = e.clientX;
+          previousY = e.clientY;
+
+        }
 
       }
 
@@ -1123,6 +1216,20 @@
     function stopPointer(e) {
 
       if (!activePointers.has(e.pointerId)) return;
+
+      // [추가] 영상 위를 한 손가락으로 톡 두드리면 재생 / 일시정지
+      if (
+        e.type === "pointerup" &&
+        activePointers.size === 1 &&
+        tapCandidate &&
+        singleStartTarget === "background" &&
+        performance.now() - tapStartTime < TAP_MAX_TIME
+      ) {
+        toggleVideoPlayback();
+      }
+
+      tapCandidate = false;
+      singleStartTarget = null;
 
       activePointers.delete(e.pointerId);
 
