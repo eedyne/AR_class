@@ -151,12 +151,17 @@
     const anchor = mindarThree.addAnchor(0);
 
     // [추가] 위치 이동용 그룹 (대상별로 분리)
-    // 3D 모델은 modelMoveGroup, 영상/이미지 배경은 backgroundMoveGroup에 넣고,
+    // 3D 모델은 modelMoveGroup, 영상은 backgroundMoveGroup, 이미지는 imageMoveGroup에 넣고,
     // 두 손가락이 닿은 대상의 그룹 위치만 바꿉니다.
     const modelMoveGroup = new THREE.Group();
     const backgroundMoveGroup = new THREE.Group();
+    const imageMoveGroup = new THREE.Group();
     anchor.group.add(modelMoveGroup);
     anchor.group.add(backgroundMoveGroup);
+    anchor.group.add(imageMoveGroup);
+
+    // [추가] 이미지의 기본(초기화) 위치: 영상 아래쪽
+    const imageHome = new THREE.Vector3(0, 0, 0);
 
     // 조명
     scene.add(
@@ -181,6 +186,9 @@
     const IMAGE_FILE = "./background.jpg";
     const MODEL_FILE = "./model.glb";
 
+    // [추가] 영상과 이미지 사이 간격 (마커 가로 길이 1 기준)
+    const IMAGE_GAP = 0.05;
+
     let modelRoot = null;
     let initialFitScale = 1;
 
@@ -194,6 +202,10 @@
     let backgroundMesh = null;
     let backgroundTexture = null;
     let imageRequested = false;
+
+    // [추가] 이미지 (영상과 동시에 표시)
+    let imageMesh = null;
+    let imageTexture = null;
 
     let targetVisible = false;
 
@@ -289,6 +301,84 @@
       backgroundMesh = plane;
       backgroundTexture = texture;
 
+      // [추가] 영상 크기가 정해졌으므로 이미지 기본 위치 다시 계산
+      updateImageHome();
+
+    }
+
+    // =================================
+    // [추가] 이미지 기본 위치 계산
+    // 영상이 있으면 영상 아래쪽, 영상이 없으면(실패 등) 중앙
+    // 이미 사용자가 옮겨 둔 이미지는 이동한 만큼의 차이를 유지
+    // =================================
+
+    function updateImageHome() {
+
+      let homeY = 0;
+
+      if (backgroundMesh && imageMesh) {
+
+        const videoHalfHeight =
+          backgroundMesh.geometry.parameters.height / 2;
+
+        const imageHalfHeight =
+          imageMesh.geometry.parameters.height / 2;
+
+        homeY = -(videoHalfHeight + imageHalfHeight + IMAGE_GAP);
+
+      }
+
+      const diffY = homeY - imageHome.y;
+
+      imageHome.y = homeY;
+      imageMoveGroup.position.y += diffY;
+
+    }
+
+    // =================================
+    // [추가] 이미지 표시 (영상과 별개로 항상 표시)
+    // =================================
+
+    function addImage(texture, mediaWidth, mediaHeight) {
+
+      if (
+        !mediaWidth ||
+        !mediaHeight ||
+        !Number.isFinite(mediaWidth) ||
+        !Number.isFinite(mediaHeight)
+      ) {
+        texture.dispose();
+        return;
+      }
+
+      const ratio = mediaHeight / mediaWidth;
+
+      const geometry = new THREE.PlaneGeometry(
+        1,
+        ratio
+      );
+
+      const material = new THREE.MeshBasicMaterial({
+        map: texture,
+        side: THREE.DoubleSide
+      });
+
+      const plane = new THREE.Mesh(
+        geometry,
+        material
+      );
+
+      // 영상과 겹쳐도 깜빡이지 않도록 아주 조금 앞에 배치
+      plane.position.set(0, 0, 0.002);
+      plane.renderOrder = 1;
+
+      imageMoveGroup.add(plane);
+
+      imageMesh = plane;
+      imageTexture = texture;
+
+      updateImageHome();
+
     }
 
     // =================================
@@ -313,7 +403,8 @@
 
           const image = texture.image;
 
-          addBackground(
+          // [변경] 영상 배경이 아니라 이미지 전용 표시로 변경
+          addImage(
             texture,
             image.width,
             image.height
@@ -354,7 +445,8 @@
 
       clearBackground();
 
-      loadBackgroundImage();
+      // [변경] 이미지는 처음부터 항상 표시 중이므로, 영상이 사라진 뒤 이미지 위치만 다시 계산
+      updateImageHome();
 
     }
 
@@ -481,8 +573,9 @@
 
     }
 
-    // 영상 우선, 실패 시 이미지 사용
+    // 영상과 이미지를 동시에 표시
     loadBackgroundVideo();
+    loadBackgroundImage();
 
     // =================================
     // 소리 켜기 / 끄기
@@ -705,8 +798,12 @@
       modelMoveGroup.position.set(0, 0, 0);
       backgroundMoveGroup.position.set(0, 0, 0);
 
-      // [추가] 영상/이미지 배경 크기도 초기화
+      // [추가] 영상 크기도 초기화
       backgroundMoveGroup.scale.set(1, 1, 1);
+
+      // [추가] 이미지 위치(영상 아래쪽 기본 위치) 및 크기 초기화
+      imageMoveGroup.position.copy(imageHome);
+      imageMoveGroup.scale.set(1, 1, 1);
 
       if (!modelRoot) return;
 
@@ -841,6 +938,18 @@
 
       }
 
+      // [추가] 이미지는 영상보다 앞에 있으므로 먼저 검사
+      if (imageMesh) {
+
+        const imageHits = dragRaycaster.intersectObject(
+          imageMesh,
+          false
+        );
+
+        if (imageHits.length > 0) return "image";
+
+      }
+
       if (backgroundMesh) {
 
         const backgroundHits = dragRaycaster.intersectObject(
@@ -869,9 +978,10 @@
 
       if (!first || first !== second) return null;
 
-      return first === "model"
-        ? modelMoveGroup
-        : backgroundMoveGroup;
+      if (first === "model") return modelMoveGroup;
+      if (first === "image") return imageMoveGroup;
+
+      return backgroundMoveGroup;
 
     }
 
@@ -910,6 +1020,8 @@
         // [변경] 핀치 시작 크기: 선택된 대상의 현재 크기
         if (dragTargetGroup === modelMoveGroup && modelRoot) {
           pinchStartScale = modelRoot.scale.x;
+        } else if (dragTargetGroup === imageMoveGroup) {
+          pinchStartScale = imageMoveGroup.scale.x;
         } else if (dragTargetGroup === backgroundMoveGroup) {
           pinchStartScale = backgroundMoveGroup.scale.x;
         } else {
@@ -919,8 +1031,10 @@
         // [추가] 어떤 대상이 선택됐는지 상단 상태 문구로 표시
         if (dragTargetGroup === modelMoveGroup) {
           status.textContent = "이동 중: 오브젝트";
+        } else if (dragTargetGroup === imageMoveGroup) {
+          status.textContent = "이동 중: 이미지";
         } else if (dragTargetGroup === backgroundMoveGroup) {
-          status.textContent = "이동 중: 배경";
+          status.textContent = "이동 중: 영상";
         } else {
           status.textContent = "이동 대상 없음";
         }
@@ -991,6 +1105,17 @@
             );
 
             backgroundMoveGroup.scale.setScalar(clampedScale);
+
+          } else if (dragTargetGroup === imageMoveGroup) {
+
+            // 이미지: 초기 크기(1) 기준 0.1배 ~ 10배
+            const clampedScale = THREE.MathUtils.clamp(
+              newScale,
+              0.1,
+              10
+            );
+
+            imageMoveGroup.scale.setScalar(clampedScale);
 
           }
 
