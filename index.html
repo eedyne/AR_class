@@ -705,6 +705,9 @@
       modelMoveGroup.position.set(0, 0, 0);
       backgroundMoveGroup.position.set(0, 0, 0);
 
+      // [추가] 영상/이미지 배경 크기도 초기화
+      backgroundMoveGroup.scale.set(1, 1, 1);
+
       if (!modelRoot) return;
 
       modelRoot.scale.setScalar(initialFitScale);
@@ -897,13 +900,21 @@
       if (activePointers.size === 2) {
 
         pinchStartDistance = getPinchDistance();
-        pinchStartScale = modelRoot ? modelRoot.scale.x : 1;
 
         // [추가] 두 손가락 이동 시작 기준점
         const mid = getPinchMidpoint();
 
         // [변경] 두 손가락이 닿은 대상 판별 후, 대상이 있을 때만 이동 기준점 설정
         dragTargetGroup = pickDragTarget();
+
+        // [변경] 핀치 시작 크기: 선택된 대상의 현재 크기
+        if (dragTargetGroup === modelMoveGroup && modelRoot) {
+          pinchStartScale = modelRoot.scale.x;
+        } else if (dragTargetGroup === backgroundMoveGroup) {
+          pinchStartScale = backgroundMoveGroup.scale.x;
+        } else {
+          pinchStartScale = 1;
+        }
 
         // [추가] 어떤 대상이 선택됐는지 상단 상태 문구로 표시
         if (dragTargetGroup === modelMoveGroup) {
@@ -950,27 +961,36 @@
       // 두 손가락: 확대 / 축소 + 위치 이동
       else if (activePointers.size === 2) {
 
-        // 확대 / 축소 (기존 동작 유지)
-        if (modelRoot) {
+        // [변경] 확대 / 축소: 처음 닿은 대상에만 적용 (오브젝트 또는 배경)
+        if (dragTargetGroup && pinchStartDistance > 0) {
 
           const currentDistance = getPinchDistance();
 
-          if (pinchStartDistance > 0) {
+          const scaleRatio = currentDistance / pinchStartDistance;
 
-            const scaleRatio = currentDistance / pinchStartDistance;
+          const newScale = pinchStartScale * scaleRatio;
 
-            const newScale = pinchStartScale * scaleRatio;
+          if (dragTargetGroup === modelMoveGroup && modelRoot) {
 
-            const minScale = initialFitScale * 0.1;
-            const maxScale = initialFitScale * 10;
-
+            // 오브젝트: 기존과 동일한 범위
             const clampedScale = THREE.MathUtils.clamp(
               newScale,
-              minScale,
-              maxScale
+              initialFitScale * 0.1,
+              initialFitScale * 10
             );
 
             modelRoot.scale.setScalar(clampedScale);
+
+          } else if (dragTargetGroup === backgroundMoveGroup) {
+
+            // 영상/이미지 배경: 초기 크기(1) 기준 0.1배 ~ 10배
+            const clampedScale = THREE.MathUtils.clamp(
+              newScale,
+              0.1,
+              10
+            );
+
+            backgroundMoveGroup.scale.setScalar(clampedScale);
 
           }
 
