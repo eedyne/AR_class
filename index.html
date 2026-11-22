@@ -143,11 +143,16 @@
     directionalLight.position.set(1, 2, 3);
     scene.add(directionalLight);
 
-    // 모델 설정
+    // =================================
+    // 모델 크기 및 위치 설정
+    // =================================
+
     const TARGET_MODEL_SIZE = 0.30;
     const MODEL_HEIGHT_OFFSET = 0.03;
 
     let modelRoot = null;
+    let initialFitScale = 1;
+
     let modelLoaded = false;
     let loadError = false;
     let targetVisible = false;
@@ -165,13 +170,16 @@
       } else if (!started) {
         status.textContent = "모델 준비 완료 / 카메라 대기";
       } else if (targetVisible) {
-        status.textContent = "마커 인식 + 오브젝트 표시 준비 완료";
+        status.textContent = "마커 인식 완료";
       } else {
         status.textContent = "마커를 카메라에 비춰주세요";
       }
     }
 
+    // =================================
     // GLB 로딩
+    // =================================
+
     loader.load(
       "./model.glb",
 
@@ -179,7 +187,7 @@
 
         const model = gltf.scene;
 
-        // 원본 바운딩 박스
+        // 원본 모델 크기 계산
         const box = new THREE.Box3().setFromObject(model);
 
         const size = new THREE.Vector3();
@@ -189,7 +197,9 @@
         box.getCenter(center);
 
         const maxDimension = Math.max(
-          size.x, size.y, size.z
+          size.x,
+          size.y,
+          size.z
         );
 
         if (!Number.isFinite(maxDimension) || maxDimension <= 0) {
@@ -199,34 +209,33 @@
           return;
         }
 
-        // 크기 자동 보정
-        const fitScale = TARGET_MODEL_SIZE / maxDimension;
+        // 목표 크기에 맞춘 실제 배율
+        initialFitScale = TARGET_MODEL_SIZE / maxDimension;
 
-        model.scale.setScalar(fitScale);
-
-        // X 중심 정렬, Y는 밑면 기준, Z 중심 정렬
+        // 모델의 밑면을 원점에 맞춤
         model.position.set(
-          -center.x * fitScale,
-          -box.min.y * fitScale,
-          -center.z * fitScale
+          -center.x,
+          -box.min.y,
+          -center.z
         );
 
-        // 마커에 부착되는 방향 그룹
-        const orientationGroup = new THREE.Group();
-
-        // Y-up GLB를 마커 평면에서 세우기
-        orientationGroup.rotation.x = Math.PI / 2;
-
-        // 마커 표면에서 카메라 방향으로 조금 띄움
-        orientationGroup.position.z = MODEL_HEIGHT_OFFSET;
-
-        anchor.group.add(orientationGroup);
-
-        // 사용자 조작 그룹
+        // 사용자 조작 및 크기 조절 그룹
         modelRoot = new THREE.Group();
 
-        orientationGroup.add(modelRoot);
+        // 크기 배율은 최상위 그룹에 적용
+        modelRoot.scale.setScalar(initialFitScale);
+
         modelRoot.add(model);
+
+        // 방향 설정 그룹
+        const orientationGroup = new THREE.Group();
+
+        orientationGroup.rotation.x = Math.PI / 2;
+        orientationGroup.position.z = MODEL_HEIGHT_OFFSET;
+
+        orientationGroup.add(modelRoot);
+
+        anchor.group.add(orientationGroup);
 
         modelLoaded = true;
 
@@ -235,11 +244,13 @@
           size.x.toFixed(3) + " × " +
           size.y.toFixed(3) + " × " +
           size.z.toFixed(3) +
-          "\n자동 적용 크기: " + TARGET_MODEL_SIZE +
-          "\n초기 배율: " + fitScale.toFixed(5) +
+          "\n목표 크기: " + TARGET_MODEL_SIZE +
+          "\n실제 적용 배율: " + initialFitScale.toFixed(5) +
           "\n배치: 밑면 기준 / X축 90도";
 
         console.log("GLB 로딩 성공", gltf);
+        console.log("목표 크기:", TARGET_MODEL_SIZE);
+        console.log("실제 배율:", initialFitScale);
 
         updateStatus();
       },
@@ -262,7 +273,10 @@
       }
     );
 
+    // =================================
     // 마커 인식
+    // =================================
+
     anchor.onTargetFound = () => {
       targetVisible = true;
       updateStatus();
@@ -273,7 +287,10 @@
       updateStatus();
     };
 
+    // =================================
     // 카메라 시작
+    // =================================
+
     async function startAR() {
 
       if (started || starting) return;
@@ -306,36 +323,47 @@
       }
     }
 
-    // 자동 카메라 실행
     startAR();
 
     startButton.addEventListener("click", startAR);
 
-    // 확대
+    // =================================
+    // 크기 조절
+    // =================================
+
     document.getElementById("bigger").onclick = () => {
-      if (modelRoot) {
-        modelRoot.scale.multiplyScalar(1.2);
-      }
+
+      if (!modelRoot) return;
+
+      modelRoot.scale.multiplyScalar(1.2);
+
     };
 
-    // 축소
     document.getElementById("smaller").onclick = () => {
-      if (modelRoot) {
-        modelRoot.scale.multiplyScalar(0.83);
-      }
+
+      if (!modelRoot) return;
+
+      modelRoot.scale.multiplyScalar(0.83);
+
     };
 
+    // =================================
     // 초기화
+    // =================================
+
     document.getElementById("reset").onclick = () => {
 
       if (!modelRoot) return;
 
-      modelRoot.scale.set(1, 1, 1);
+      modelRoot.scale.setScalar(initialFitScale);
       modelRoot.rotation.set(0, 0, 0);
 
     };
 
+    // =================================
     // 모바일 터치 회전
+    // =================================
+
     let previousX = 0;
     let previousY = 0;
     let dragging = false;
