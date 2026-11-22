@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -70,6 +71,23 @@
       font-size: 17px;
     }
 
+    #soundButton {
+      display: none;
+      position: fixed;
+      top: 60px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 16;
+      padding: 10px 18px;
+      border: 0;
+      border-radius: 20px;
+      background: white;
+      color: #222;
+      font-size: 14px;
+      font-weight: bold;
+      touch-action: manipulation;
+    }
+
     #controls {
       position: fixed;
       bottom: 25px;
@@ -97,9 +115,11 @@
 
   <div id="container"></div>
   <div id="touchArea"></div>
+
   <div id="status">AR 준비 중...</div>
 
   <button id="startButton">카메라 시작</button>
+  <button id="soundButton">소리 켜기</button>
 
   <div id="controls">
     <button id="smaller">－</button>
@@ -115,6 +135,7 @@
 
     const status = document.getElementById("status");
     const startButton = document.getElementById("startButton");
+    const soundButton = document.getElementById("soundButton");
     const touchArea = document.getElementById("touchArea");
 
     // =================================
@@ -128,7 +149,6 @@
     });
 
     const { renderer, scene, camera } = mindarThree;
-
     const anchor = mindarThree.addAnchor(0);
 
     // 조명
@@ -150,7 +170,6 @@
     const TARGET_MODEL_SIZE = 1.00;
     const MODEL_HEIGHT_OFFSET = 0.03;
 
-    // 콘텐츠 파일명
     const VIDEO_FILE = "./background.mp4";
     const IMAGE_FILE = "./background.jpg";
     const MODEL_FILE = "./model.glb";
@@ -159,13 +178,26 @@
     let initialFitScale = 1;
 
     let video = null;
-    let videoLoaded = false;
+    let videoTexture = null;
+    let videoReady = false;
+    let videoFailed = false;
+    let videoLoadTimer = null;
+    let soundEnabled = false;
+
+    let backgroundMesh = null;
+    let backgroundTexture = null;
+    let imageRequested = false;
+
     let targetVisible = false;
 
     let started = false;
     let starting = false;
 
     const loader = new GLTFLoader();
+
+    // =================================
+    // 상태 표시
+    // =================================
 
     function updateStatus() {
 
@@ -176,19 +208,57 @@
       } else {
         status.textContent = "마커를 카메라에 비춰주세요";
       }
+
+    }
+
+    // =================================
+    // 기존 배경 제거
+    // =================================
+
+    function clearBackground() {
+
+      if (backgroundMesh) {
+
+        anchor.group.remove(backgroundMesh);
+
+        backgroundMesh.geometry.dispose();
+        backgroundMesh.material.dispose();
+
+        backgroundMesh = null;
+
+      }
+
+      if (backgroundTexture) {
+
+        backgroundTexture.dispose();
+        backgroundTexture = null;
+
+      }
+
     }
 
     // =================================
     // 배경 이미지 / 영상 표시
     // =================================
 
-    function addBackground(texture) {
+    function addBackground(texture, mediaWidth, mediaHeight) {
 
-      const image = texture.image;
+      if (
+        !mediaWidth ||
+        !mediaHeight ||
+        !Number.isFinite(mediaWidth) ||
+        !Number.isFinite(mediaHeight)
+      ) {
+        texture.dispose();
+        return;
+      }
 
-      const ratio = image.height / image.width;
+      // 기존 배경이 있다면 제거
+      clearBackground();
 
-      // 마커 폭 1을 기준으로 비율 유지
+      // 실제 미디어 가로세로 비율
+      const ratio = mediaHeight / mediaWidth;
+
       const geometry = new THREE.PlaneGeometry(
         1,
         ratio
@@ -204,44 +274,135 @@
         material
       );
 
-      // 마커 표면에 배치
       plane.position.set(0, 0, 0);
-
       plane.renderOrder = 0;
 
       anchor.group.add(plane);
 
+      backgroundMesh = plane;
+      backgroundTexture = texture;
+
     }
 
+    // =================================
     // 이미지 로딩
+    // =================================
+
     function loadBackgroundImage() {
+
+      if (imageRequested) return;
+
+      imageRequested = true;
 
       const textureLoader = new THREE.TextureLoader();
 
       textureLoader.load(
+
         IMAGE_FILE,
 
         (texture) => {
-          addBackground(texture);
-          console.log("배경 이미지 로딩 성공");
+
+          texture.colorSpace = THREE.SRGBColorSpace;
+
+          const image = texture.image;
+
+          addBackground(
+            texture,
+            image.width,
+            image.height
+          );
+
         },
 
         undefined,
 
-        (error) => {
-          console.log("배경 이미지 없음 또는 로딩 실패");
+        () => {
+          console.log("배경 이미지 로딩 실패");
         }
+
       );
+
     }
 
+    // =================================
+    // 영상 실패 시 이미지로 전환
+    // =================================
+
+    function switchToImage() {
+
+      if (videoFailed) return;
+
+      videoFailed = true;
+
+      if (videoLoadTimer) {
+        clearTimeout(videoLoadTimer);
+        videoLoadTimer = null;
+      }
+
+      if (video) {
+        video.pause();
+      }
+
+      soundButton.style.display = "none";
+
+      clearBackground();
+
+      loadBackgroundImage();
+
+    }
+
+    // =================================
+    // 영상 재생
+    // =================================
+
+    function playBackgroundVideo() {
+
+      if (
+        !video ||
+        !videoReady ||
+        videoFailed ||
+        !targetVisible
+      ) {
+        return;
+      }
+
+      video.play().catch((error) => {
+
+        console.log("영상 재생 오류:", error);
+
+        // 브라우저의 사용자 조작 요구
+        if (error.name === "NotAllowedError") {
+
+          soundButton.textContent = "영상 재생 · 소리 켜기";
+          soundButton.style.display = "block";
+
+        } else {
+
+          // 코덱 또는 재생 오류
+          switchToImage();
+
+        }
+
+      });
+
+    }
+
+    // =================================
     // 영상 로딩
+    // =================================
+
     function loadBackgroundVideo() {
 
       video = document.createElement("video");
 
       video.src = VIDEO_FILE;
       video.loop = true;
+
+      // 자동 재생을 위한 초기 음소거
+      // 사용자가 소리 켜기를 누르면 해제
       video.muted = true;
+      video.volume = 1;
+
       video.playsInline = true;
       video.autoplay = false;
       video.preload = "auto";
@@ -249,37 +410,65 @@
       video.setAttribute("playsinline", "");
       video.setAttribute("webkit-playsinline", "");
 
+      // 영상 메타데이터 로딩 완료
       video.addEventListener("loadedmetadata", () => {
 
-        if (videoLoaded) return;
+        if (videoReady || videoFailed) return;
 
-        videoLoaded = true;
+        const videoWidth = video.videoWidth;
+        const videoHeight = video.videoHeight;
 
-        const texture = new THREE.VideoTexture(video);
+        if (!videoWidth || !videoHeight) {
+          switchToImage();
+          return;
+        }
 
-        texture.colorSpace = THREE.SRGBColorSpace;
+        videoReady = true;
 
-        addBackground(texture);
+        if (videoLoadTimer) {
+          clearTimeout(videoLoadTimer);
+          videoLoadTimer = null;
+        }
 
-        console.log("배경 영상 로딩 성공");
+        // 영상 텍스처 생성
+        videoTexture = new THREE.VideoTexture(video);
+
+        videoTexture.colorSpace = THREE.SRGBColorSpace;
+
+        // 중요:
+        // 이미지와 달리 영상은 videoWidth / videoHeight 사용
+        addBackground(
+          videoTexture,
+          video.videoWidth,
+          video.videoHeight
+        );
 
         if (targetVisible) {
-          video.play().catch(() => {});
+
+          soundButton.style.display = "block";
+          updateSoundButton();
+
+          playBackgroundVideo();
+
         }
 
       });
 
+      // 영상 로딩 실패
       video.addEventListener("error", () => {
 
-        if (videoLoaded) return;
-
-        console.log("영상 없음 또는 로딩 실패. 이미지 사용");
-
-        videoLoaded = true;
-
-        loadBackgroundImage();
+        switchToImage();
 
       });
+
+      // 영상 로딩이 너무 오래 걸리면 이미지 사용
+      videoLoadTimer = setTimeout(() => {
+
+        if (!videoReady && !videoFailed) {
+          switchToImage();
+        }
+
+      }, 15000);
 
       video.load();
 
@@ -287,6 +476,48 @@
 
     // 영상 우선, 실패 시 이미지 사용
     loadBackgroundVideo();
+
+    // =================================
+    // 소리 켜기 / 끄기
+    // =================================
+
+    function updateSoundButton() {
+
+      soundButton.textContent = soundEnabled
+        ? "소리 끄기"
+        : "소리 켜기";
+
+    }
+
+    soundButton.addEventListener("click", async () => {
+
+      if (!video || !videoReady || videoFailed) return;
+
+      soundEnabled = !soundEnabled;
+
+      video.muted = !soundEnabled;
+
+      updateSoundButton();
+
+      if (targetVisible) {
+
+        try {
+
+          await video.play();
+
+        } catch (error) {
+
+          console.log("영상 재생 오류:", error);
+
+          if (error.name !== "NotAllowedError") {
+            switchToImage();
+          }
+
+        }
+
+      }
+
+    });
 
     // =================================
     // GLB 3D 모델 로딩
@@ -344,8 +575,6 @@
 
         anchor.group.add(orientationGroup);
 
-        console.log("GLB 모델 로딩 성공");
-
       },
 
       undefined,
@@ -364,8 +593,14 @@
 
       targetVisible = true;
 
-      if (video && videoLoaded) {
-        video.play().catch(() => {});
+      if (video && videoReady && !videoFailed) {
+
+        soundButton.style.display = "block";
+
+        updateSoundButton();
+
+        playBackgroundVideo();
+
       }
 
       updateStatus();
@@ -379,6 +614,8 @@
       if (video) {
         video.pause();
       }
+
+      soundButton.style.display = "none";
 
       updateStatus();
 
