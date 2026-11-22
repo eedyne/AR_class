@@ -335,48 +335,47 @@
 
     // 모바일 터치 드래그 회전
 
+    const touchArea = document.getElementById("touchArea");
+
     let previousX = 0;
     let previousY = 0;
     let dragging = false;
-
-    renderer.domElement.style.touchAction = "none";
-
-    renderer.domElement.addEventListener("pointerdown", (e) => {
-
-      if (!modelRoot) return;
-
+    
+    touchArea.addEventListener("pointerdown", (e) => {
+    
+      if (!modelRoot || !targetVisible) return;
+    
       dragging = true;
-
+    
       previousX = e.clientX;
       previousY = e.clientY;
-
-      renderer.domElement.setPointerCapture(e.pointerId);
-
+    
+      touchArea.setPointerCapture(e.pointerId);
+    
     });
-
-    renderer.domElement.addEventListener("pointermove", (e) => {
-
+    
+    touchArea.addEventListener("pointermove", (e) => {
+    
       if (!dragging || !modelRoot) return;
-
+    
       const deltaX = e.clientX - previousX;
       const deltaY = e.clientY - previousY;
-
+    
       modelRoot.rotation.y += deltaX * 0.01;
       modelRoot.rotation.x += deltaY * 0.01;
-
+    
       previousX = e.clientX;
       previousY = e.clientY;
-
+    
     });
-
-    renderer.domElement.addEventListener("pointerup", () => {
+    
+    touchArea.addEventListener("pointerup", () => {
       dragging = false;
     });
-
-    renderer.domElement.addEventListener("pointercancel", () => {
+    
+    touchArea.addEventListener("pointercancel", () => {
       dragging = false;
     });
-
   </script>
 
 </body>
