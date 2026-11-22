@@ -49,7 +49,6 @@
       pointer-events: none;
     }
 
-    /* 드래그 회전 영역 */
     #touchArea {
       position: fixed;
       inset: 0;
@@ -72,7 +71,6 @@
       font-size: 17px;
     }
 
-    /* 하단 조작 버튼 */
     #controls {
       position: fixed;
       bottom: 25px;
@@ -99,9 +97,7 @@
 <body>
 
   <div id="container"></div>
-
   <div id="touchArea"></div>
-
   <div id="status">AR 준비 중...</div>
 
   <button id="startButton">카메라 시작</button>
@@ -298,7 +294,7 @@
 
     startButton.addEventListener("click", startAR);
 
-    // 확대
+    // 확대 버튼
 
     document.getElementById("bigger").addEventListener("click", () => {
 
@@ -308,7 +304,7 @@
 
     });
 
-    // 축소
+    // 축소 버튼
 
     document.getElementById("smaller").addEventListener("click", () => {
 
@@ -330,64 +326,141 @@
     });
 
     // =================================
-    // 손가락 드래그 회전
+    // 한 손가락 회전 / 두 손가락 확대 축소
     // =================================
+
+    const activePointers = new Map();
 
     let previousX = 0;
     let previousY = 0;
-    let dragging = false;
-    let activePointerId = null;
+
+    let pinchStartDistance = 0;
+    let pinchStartScale = 1;
 
     const ROTATION_SPEED = 0.01;
+
+    function getPinchDistance() {
+
+      const points = Array.from(activePointers.values());
+
+      if (points.length < 2) return 0;
+
+      const dx = points[0].x - points[1].x;
+      const dy = points[0].y - points[1].y;
+
+      return Math.sqrt(dx * dx + dy * dy);
+    }
 
     touchArea.addEventListener("pointerdown", (e) => {
 
       if (!modelRoot || !targetVisible) return;
 
-      dragging = true;
-      activePointerId = e.pointerId;
+      e.preventDefault();
 
-      previousX = e.clientX;
-      previousY = e.clientY;
+      activePointers.set(e.pointerId, {
+        x: e.clientX,
+        y: e.clientY
+      });
 
       touchArea.setPointerCapture(e.pointerId);
+
+      if (activePointers.size === 1) {
+
+        previousX = e.clientX;
+        previousY = e.clientY;
+
+      } else if (activePointers.size === 2) {
+
+        // 두 손가락 시작 시 크기와 거리 저장
+        pinchStartDistance = getPinchDistance();
+        pinchStartScale = modelRoot.scale.x;
+
+      }
 
     });
 
     touchArea.addEventListener("pointermove", (e) => {
 
-      if (!dragging || !modelRoot) return;
-      if (e.pointerId !== activePointerId) return;
+      if (!modelRoot || !activePointers.has(e.pointerId)) return;
 
-      const deltaX = e.clientX - previousX;
-      const deltaY = e.clientY - previousY;
+      e.preventDefault();
 
-      // 좌우 드래그: Y축 회전
-      modelRoot.rotation.y += deltaX * ROTATION_SPEED;
+      const previousPoint = activePointers.get(e.pointerId);
 
-      // 상하 드래그: X축 회전
-      modelRoot.rotation.x += deltaY * ROTATION_SPEED;
+      activePointers.set(e.pointerId, {
+        x: e.clientX,
+        y: e.clientY
+      });
 
-      previousX = e.clientX;
-      previousY = e.clientY;
+      // 한 손가락: 모델 회전
+      if (activePointers.size === 1) {
+
+        const deltaX = e.clientX - previousX;
+        const deltaY = e.clientY - previousY;
+
+        modelRoot.rotation.y += deltaX * ROTATION_SPEED;
+        modelRoot.rotation.x += deltaY * ROTATION_SPEED;
+
+        previousX = e.clientX;
+        previousY = e.clientY;
+
+      }
+
+      // 두 손가락: 확대 및 축소
+      else if (activePointers.size === 2) {
+
+        const currentDistance = getPinchDistance();
+
+        if (pinchStartDistance > 0) {
+
+          const scaleRatio = currentDistance / pinchStartDistance;
+
+          const newScale = pinchStartScale * scaleRatio;
+
+          // 지나치게 작거나 커지는 것을 방지
+          const minScale = initialFitScale * 0.1;
+          const maxScale = initialFitScale * 10;
+
+          const clampedScale = THREE.MathUtils.clamp(
+            newScale,
+            minScale,
+            maxScale
+          );
+
+          modelRoot.scale.setScalar(clampedScale);
+
+        }
+
+      }
 
     });
 
-    function stopDragging(e) {
+    function stopPointer(e) {
 
-      if (e.pointerId !== activePointerId) return;
+      if (!activePointers.has(e.pointerId)) return;
 
-      dragging = false;
-      activePointerId = null;
+      activePointers.delete(e.pointerId);
+
+      if (activePointers.size === 1) {
+
+        // 두 손가락 중 하나를 놓으면 남은 손가락을
+        // 새로운 회전 시작점으로 설정
+        const remaining = Array.from(activePointers.values())[0];
+
+        previousX = remaining.x;
+        previousY = remaining.y;
+
+      } else if (activePointers.size === 0) {
+
+        pinchStartDistance = 0;
+
+      }
 
     }
 
-    touchArea.addEventListener("pointerup", stopDragging);
-    touchArea.addEventListener("pointercancel", stopDragging);
-    touchArea.addEventListener("lostpointercapture", () => {
-      dragging = false;
-      activePointerId = null;
-    });
+    touchArea.addEventListener("pointerup", stopPointer);
+    touchArea.addEventListener("pointercancel", stopPointer);
+    touchArea.addEventListener("lostpointercapture", stopPointer);
 
   </script>
 
