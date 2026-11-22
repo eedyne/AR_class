@@ -150,6 +150,12 @@
     const { renderer, scene, camera } = mindarThree;
     const anchor = mindarThree.addAnchor(0);
 
+    // [추가] 위치 이동용 그룹
+    // 3D 모델 + 영상/이미지 배경을 이 그룹에 넣고,
+    // 두 손가락 드래그 시 이 그룹의 위치만 바꿉니다.
+    const moveGroup = new THREE.Group();
+    anchor.group.add(moveGroup);
+
     // 조명
     scene.add(
       new THREE.HemisphereLight(0xffffff, 0x444444, 1.5)
@@ -218,7 +224,7 @@
 
       if (backgroundMesh) {
 
-        anchor.group.remove(backgroundMesh);
+        moveGroup.remove(backgroundMesh);
 
         backgroundMesh.geometry.dispose();
         backgroundMesh.material.dispose();
@@ -276,7 +282,7 @@
       plane.position.set(0, 0, 0);
       plane.renderOrder = 0;
 
-      anchor.group.add(plane);
+      moveGroup.add(plane);
 
       backgroundMesh = plane;
       backgroundTexture = texture;
@@ -572,7 +578,7 @@
 
         orientationGroup.add(modelRoot);
 
-        anchor.group.add(orientationGroup);
+        moveGroup.add(orientationGroup);
 
       },
 
@@ -693,6 +699,9 @@
 
     document.getElementById("reset").addEventListener("click", () => {
 
+      // [추가] 이동한 위치 초기화 (모델이 없어도 영상/이미지 위치는 초기화)
+      moveGroup.position.set(0, 0, 0);
+
       if (!modelRoot) return;
 
       modelRoot.scale.setScalar(initialFitScale);
@@ -702,7 +711,7 @@
 
     // =================================
     // 한 손가락 회전
-    // 두 손가락 확대 / 축소
+    // 두 손가락 확대 / 축소 + 위치 이동
     // =================================
 
     const activePointers = new Map();
@@ -728,9 +737,82 @@
 
     }
 
+    // [추가] 두 손가락 중간점 (화면 좌표)
+    function getPinchMidpoint() {
+
+      const points = Array.from(activePointers.values());
+
+      if (points.length < 2) return null;
+
+      return {
+        x: (points[0].x + points[1].x) / 2,
+        y: (points[0].y + points[1].y) / 2
+      };
+
+    }
+
+    // [추가] 화면 좌표 -> 마커 평면(anchor.group 로컬 좌표) 변환
+    // 마커가 기울어져 있어도 손가락 아래 위치가 그대로 따라오도록
+    // 카메라 광선이 마커 평면과 만나는 지점을 사용합니다.
+    const dragRaycaster = new THREE.Raycaster();
+    const dragPlane = new THREE.Plane();
+    const dragNdc = new THREE.Vector2();
+    const dragPlaneNormal = new THREE.Vector3();
+    const dragPlanePoint = new THREE.Vector3();
+    const dragHitPoint = new THREE.Vector3();
+
+    function screenToAnchorLocal(clientX, clientY, out) {
+
+      const rect = renderer.domElement.getBoundingClientRect();
+
+      if (!rect.width || !rect.height) return false;
+
+      dragNdc.set(
+        ((clientX - rect.left) / rect.width) * 2 - 1,
+        -((clientY - rect.top) / rect.height) * 2 + 1
+      );
+
+      camera.updateMatrixWorld();
+      camera.projectionMatrixInverse
+        .copy(camera.projectionMatrix)
+        .invert();
+
+      dragRaycaster.setFromCamera(dragNdc, camera);
+
+      anchor.group.updateMatrixWorld(true);
+
+      dragPlaneNormal
+        .set(0, 0, 1)
+        .transformDirection(anchor.group.matrixWorld);
+
+      dragPlanePoint.setFromMatrixPosition(anchor.group.matrixWorld);
+
+      dragPlane.setFromNormalAndCoplanarPoint(
+        dragPlaneNormal,
+        dragPlanePoint
+      );
+
+      if (!dragRaycaster.ray.intersectPlane(dragPlane, dragHitPoint)) {
+        return false;
+      }
+
+      out.copy(dragHitPoint);
+      anchor.group.worldToLocal(out);
+
+      return true;
+
+    }
+
+    // [추가] 두 손가락 이동 상태
+    const dragPrevLocal = new THREE.Vector3();
+    const dragCurrLocal = new THREE.Vector3();
+    let dragHasPrev = false;
+
     touchArea.addEventListener("pointerdown", (e) => {
 
-      if (!targetVisible || !modelRoot) return;
+      // [변경] modelRoot가 없어도(영상/이미지만 있어도) 이동은 가능하도록
+      // 기존 "|| !modelRoot" 조건 제거
+      if (!targetVisible) return;
 
       e.preventDefault();
 
@@ -751,7 +833,14 @@
       if (activePointers.size === 2) {
 
         pinchStartDistance = getPinchDistance();
-        pinchStartScale = modelRoot.scale.x;
+        pinchStartScale = modelRoot ? modelRoot.scale.x : 1;
+
+        // [추가] 두 손가락 이동 시작 기준점
+        const mid = getPinchMidpoint();
+
+        dragHasPrev = mid
+          ? screenToAnchorLocal(mid.x, mid.y, dragPrevLocal)
+          : false;
 
       }
 
@@ -782,27 +871,52 @@
 
       }
 
-      // 두 손가락: 확대 / 축소
-      else if (activePointers.size === 2 && modelRoot) {
+      // 두 손가락: 확대 / 축소 + 위치 이동
+      else if (activePointers.size === 2) {
 
-        const currentDistance = getPinchDistance();
+        // 확대 / 축소 (기존 동작 유지)
+        if (modelRoot) {
 
-        if (pinchStartDistance > 0) {
+          const currentDistance = getPinchDistance();
 
-          const scaleRatio = currentDistance / pinchStartDistance;
+          if (pinchStartDistance > 0) {
 
-          const newScale = pinchStartScale * scaleRatio;
+            const scaleRatio = currentDistance / pinchStartDistance;
 
-          const minScale = initialFitScale * 0.1;
-          const maxScale = initialFitScale * 10;
+            const newScale = pinchStartScale * scaleRatio;
 
-          const clampedScale = THREE.MathUtils.clamp(
-            newScale,
-            minScale,
-            maxScale
-          );
+            const minScale = initialFitScale * 0.1;
+            const maxScale = initialFitScale * 10;
 
-          modelRoot.scale.setScalar(clampedScale);
+            const clampedScale = THREE.MathUtils.clamp(
+              newScale,
+              minScale,
+              maxScale
+            );
+
+            modelRoot.scale.setScalar(clampedScale);
+
+          }
+
+        }
+
+        // [추가] 위치 이동: 두 손가락 중간점이 움직인 만큼 모델 + 영상/이미지 이동
+        const mid = getPinchMidpoint();
+
+        if (mid) {
+
+          if (!dragHasPrev) {
+
+            dragHasPrev = screenToAnchorLocal(mid.x, mid.y, dragPrevLocal);
+
+          } else if (screenToAnchorLocal(mid.x, mid.y, dragCurrLocal)) {
+
+            moveGroup.position.x += dragCurrLocal.x - dragPrevLocal.x;
+            moveGroup.position.y += dragCurrLocal.y - dragPrevLocal.y;
+
+            dragPrevLocal.copy(dragCurrLocal);
+
+          }
 
         }
 
@@ -815,6 +929,9 @@
       if (!activePointers.has(e.pointerId)) return;
 
       activePointers.delete(e.pointerId);
+
+      // [추가] 두 손가락 상태가 끝나면 이동 기준점 해제
+      dragHasPrev = false;
 
       if (activePointers.size === 1) {
 
