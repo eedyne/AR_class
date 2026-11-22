@@ -808,7 +808,8 @@
 
     // [추가] 영상 위 드래그 시 재생 위치 이동량
     // 1 = 화면 가로 전체를 드래그하면 영상 전체 길이만큼 이동
-    const SEEK_SCREEN_WIDTH_RATIO = 1;
+    // 0.25 = 화면 가로 전체를 드래그하면 영상 길이의 25%만큼 이동 (값이 작을수록 둔해짐)
+    const SEEK_SCREEN_WIDTH_RATIO = 0.25;
 
     // [추가] 한 손가락 터치 상태
     let singleStartTarget = null;   // 터치 시작 지점의 대상 ("model" / "image" / "background" / null)
