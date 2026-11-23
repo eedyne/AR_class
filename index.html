@@ -136,10 +136,8 @@
     const soundButton = document.getElementById("soundButton");
     const touchArea = document.getElementById("touchArea");
 
-    // =================================
-    // AR 초기 설정
-    // =================================
 
+    // AR 초기 설정
     const mindarThree = new MindARThree({
       container: document.querySelector("#container"),
       imageTargetSrc: "./targets.mind",
@@ -217,10 +215,8 @@
 
     const loader = new GLTFLoader();
 
-    // =================================
-    // 상태 표시
-    // =================================
 
+    // 상태 표시
     function updateStatus() {
 
       if (!started) {
